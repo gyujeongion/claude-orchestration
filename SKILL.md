@@ -241,10 +241,17 @@ MODULES.md 작성:
 
 ### 2-1. Executor 스폰 형식
 
-구현 에이전트를 스폰할 때 아래 프롬프트 형식을 사용한다:
+구현 에이전트를 스폰할 때 아래 프롬프트 형식을 사용한다.
+
+**스폰 직전**: `.orchestration/DECISIONS.md` 최근 3개 항목을 읽어 브리핑에 포함한다. 없으면 생략.
 
 ```
 Agent 스폰 (Executor 역할):
+
+## Recent architectural decisions (read before starting)
+<DECISIONS.md 최근 3개 항목 그대로 붙여넣기 — 없으면 이 섹션 생략>
+
+---
 
 You are an Executor. Implement exactly as specified.
 
@@ -257,6 +264,7 @@ Rules:
 - No debug code left behind (console.log, TODO, HACK, debugger).
 - Match existing codebase patterns (naming, error handling, imports).
 - After 3 failed attempts on the same issue: stop and report full context.
+- If any recent decision above directly contradicts your task spec: stop and report the conflict.
 
 Task: <구체적 스펙 — 입력/출력/기준>
 Inputs: <파일 경로, 데이터, 맥락>
@@ -373,24 +381,6 @@ After fixing: report what changed and why the fix addresses the root cause
 → "GATE: [결정 사항] — [선택지 A/B]" 한 줄 보고
 ```
 
-### 2-6. 모듈 전환 sync gate (필수)
-
-**다른 모듈로 주제가 바뀌기 직전, 반드시 허브를 커밋한다.**
-
-```
-현재 모듈 A 논의 중 → 사용자가 B 모듈로 전환 요청
-  ↓
-[sync gate 실행 — 전환 전]
-  1. 이번 A 모듈 대화에서 나온 결정·방향·맥락 요약
-  2. CONTEXT.md §In Progress / Watch-outs 업데이트
-  3. 결정 사항 → DECISIONS.md 기록 (날짜+결정+근거)
-  4. 새로 배운 것 → MEMORY.md 추가 (있으면)
-  ↓
-[B 모듈 전환]
-```
-
-이 게이트를 건너뛰면 A 모듈 대화가 영구 소실된다. 예외 없음.
-
 ---
 
 ## PHASE 3 — 결정 문서화 규칙 (필수)
@@ -504,34 +494,12 @@ GATE (사용자 확인 필요):
 1. .orchestration/HUB.md 읽기
 2. .orchestration/CONTEXT.md §현재 상태 확인
 3. .orchestration/GOAL.md §완료 여부 확인
-4. 목표 미달성 → 즉시 다음 모듈 에이전트 스폰
-5. 상태 불명확 → .orchestration/GATE_LOG.md 최근 항목 확인
+4. .orchestration/DECISIONS.md 최근 5개 항목 확인 — 구조 변경·번복된 결정 파악
+5. 목표 미달성 → 즉시 다음 모듈 에이전트 스폰
+6. 상태 불명확 → .orchestration/GATE_LOG.md 최근 항목 확인
 ```
 
-**세션이 끊겨도 허브 문서가 있으면 같은 자리에서 재개.**
-
----
-
-## 세션 wrap-up 프로토콜 (필수)
-
-사용자 메시지에 아래 마무리 신호가 감지되면 즉시 전체 허브를 flush한다:
-
-```
-신호 키워드: ㅇㅇ / 알겠어 / 됐어 / 고마워 / 잠깐 / 나중에 / ok / done / 끊을게 / 나중에 봐
-```
-
-**flush 절차:**
-
-```
-1. 이번 세션 전체 대화에서 나온 결정 → DECISIONS.md 일괄 기록
-2. 현재 모듈별 진행 상태 → CONTEXT.md §In Progress 최신화
-3. 다음 세션에서 바로 시작할 것 → CONTEXT.md §Next Immediate Actions 명시
-4. 이번 세션에서 배운 것·주의사항 → MEMORY.md 추가
-5. 사용자에게 한 줄 보고:
-   "허브 싱크 완료. [모듈명] 진행 중 상태로 저장됨. 다음 세션에서 HUB.md 읽으면 바로 이어집니다."
-```
-
-이 절차를 거치지 않고 세션이 끊기면 이번 대화의 결정과 맥락이 소실된다.
+**세션이 끊겨도 허브 문서가 있으면 같은 자리에서 재개. DECISIONS.md가 CONTEXT.md보다 최신일 수 있으니 반드시 둘 다 읽는다.**
 
 ---
 
