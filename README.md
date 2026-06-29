@@ -2,17 +2,17 @@
 
 # orchestration — Persistent Project Orchestration
 
-**Keep Claude in the control tower. Never let it touch the code.**
+**Background agents build. You and Claude keep talking.**
 
-A Claude Code skill that forces Claude to stay in the orchestrator role — decomposing, delegating, and gating — while disposable agents do every line of the actual work.
+A Claude Code skill that splits every project into two parallel tracks: background agents that implement, and a main Claude session that stays free to talk with you — making decisions, adjusting direction, handling whatever comes up.
 
 ---
 
 ## The Problem
 
-You ask Claude to build three features. It starts as orchestrator — then gets distracted by one bug, fixes it directly, forgets the other two, and stops 30 minutes later asking "what should I do next?"
+You ask Claude to build three features. It starts strong — then gets pulled into one bug, fixes it directly, loses track of the other two, and stops 30 minutes later asking "what should I do next?"
 
-The orchestrator role collapses the moment Claude is allowed to edit files. It becomes a single-threaded implementer with no memory of the original goal. Session ends. Context is gone. You start over.
+The real problem isn't just drift. It's that **the moment Claude starts implementing, your conversation dies.** You can't ask questions. You can't adjust direction. You wait. When it finally surfaces, you've lost context too.
 
 → See [examples/before/transcript.md](examples/before/transcript.md)
 
@@ -20,13 +20,21 @@ The orchestrator role collapses the moment Claude is allowed to edit files. It b
 
 ## The Solution
 
-`/orchestration` enforces a strict separation between planning and doing:
+`/orchestration` runs two tracks in parallel:
 
-- **Decomposes** the goal into discrete modules before touching anything
-- **Spawns** Executor agents per module — Claude never edits files itself
-- **Gates** on user confirmation before irreversible decisions
-- **Persists** all state in `.orchestration/` — re-entry picks up exactly where it left off
-- **Loops** Executor → Verifier automatically until each module passes or escalates
+```
+You ←──────────────────────────────────→ Main Claude
+                                         (always available)
+                                              ↓ delegates
+                                    [Background Executor agents]
+                                    [Background Verifier agents]
+                                         (doing the work)
+```
+
+- **You keep talking to Claude** — ask questions, change direction, make decisions as they surface
+- **Background agents do all implementation** — Claude never edits files in your session
+- **Decisions happen naturally through conversation** — no need to front-load everything upfront
+- **State persists in `.orchestration/`** — context resets don't restart the project
 
 → See [examples/after/transcript.md](examples/after/transcript.md)
 
@@ -34,24 +42,13 @@ The orchestrator role collapses the moment Claude is allowed to edit files. It b
 
 ## How It Works
 
-```
-[User] → /orchestration ~/project "goal"
-             ↓
-[Orchestrator] decomposes → spawns → gates → documents
-             ↓                  ↓
-[Executor agents]    [Verifier agents]
-implement            validate (read-only)
-             ↓
-[.orchestration/ hub] — persists across sessions
-```
+**Main session (your conversation)** — Claude decomposes the goal, spawns agents, reads reports, makes gate calls. Always responsive to you.
 
-**Orchestrator** — reads the hub, decomposes the goal, delegates to agents, never edits source files.
+**Executor agents** — each gets a single-module brief, implements it, reports back. Isolated and replaceable.
 
-**Executor agents** — receive a single-module brief, implement, report back. Isolated, replaceable.
+**Verifier agents** — read-only validation. Flag failures. Trigger auto-retry or escalate.
 
-**Verifier agents** — read-only validation pass. Flag failures. Trigger the bugfix loop or escalate.
-
-**.orchestration/ hub** — the shared brain. Survives context resets. Makes re-entry instant.
+**.orchestration/ hub** — shared brain across all agents and sessions. Re-entry after a context reset picks up exactly where things left off.
 
 ---
 
@@ -59,7 +56,9 @@ implement            validate (read-only)
 
 `hooks/orchestration-guard.py` is a physical enforcement layer, not a rule Claude can talk itself out of.
 
-When `.orchestration/ACTIVE` exists, the hook blocks every `Edit`, `Write`, and `NotebookEdit` call from the orchestrator session. Only Executor sub-agents — spawned into separate contexts — are allowed to touch files. The orchestrator commands; it does not implement.
+When `.orchestration/ACTIVE` exists, the hook blocks every `Edit`, `Write`, and `NotebookEdit` call from the main session. Only Executor sub-agents — spawned into separate contexts — are allowed to touch files. The main session directs; it never implements.
+
+This is what keeps the conversation track free. Claude physically cannot get pulled into implementation.
 
 **Install:**
 
@@ -89,7 +88,7 @@ cp hooks/orchestration-guard.py ~/.claude/hooks/
 /orchestration ~/my-project "your goal in one sentence"
 ```
 
-Claude sets up the hub, decomposes your project into modules, and runs Executor → Verifier loops until done. You only get pulled in for GATE decisions.
+Claude sets up the hub, decomposes your project into modules, and starts spawning background agents. While they work, you stay in conversation with Claude — adjusting, deciding, redirecting as needed.
 
 ---
 
