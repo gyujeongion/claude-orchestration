@@ -31,6 +31,7 @@ argument-hint: "<프로젝트 경로> <목표 설명>"
   ✗ 코드 직접 구현
   ✗ bash로 상태 변경
   ✗ 구현 없이 멈추기
+  ✗ 요구사항이 2개 이상인데 전부 GOAL.md §Pending에 기록하기 전에 Executor 스폰
 ```
 
 ---
@@ -247,6 +248,10 @@ MODULES.md 작성:
 
 ```
 Agent 스폰 (Executor 역할):
+
+## Pending backlog check
+이번 대화에서 아직 모듈 미배정된 요구사항: <나열 — 없으면 "없음">
+→ 있으면 이 Executor 스폰 전에 GOAL.md §Pending에 전부 기록했는지 확인
 
 ## Recent architectural decisions (read before starting)
 <DECISIONS.md 최근 3개 항목 그대로 붙여넣기 — 없으면 이 섹션 생략>
