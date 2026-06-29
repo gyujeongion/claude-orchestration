@@ -362,16 +362,31 @@ After fixing: report what changed and why the fix addresses the root cause
 버그 수정 후 → **다시 2-2 Verifier 사이클** 반복.
 검증 통과까지 이 루프를 돌린다.
 
-### 2-4. 게이트 판정 (Verifier PASS 후)
+### 2-4. 게이트 판정 (오케스트레이터 독립 검증)
+
+Verifier가 PASS를 냈어도 오케스트레이터가 직접 검증한다. Verifier 결과를 그대로 통과시키지 않는다.
 
 ```
-1. Read로 결과물 확인 (직접 수정 X)
-2. Verifier 보고서 + test_sandbox 결과 대조
-3. 판정:
+1. Read로 결과물 직접 확인 (직접 수정 X)
+
+2. Verifier 보고서 독립 검토 — 아래 중 하나라도 해당하면 PASS 거부 → FAIL 처리:
+   ✗ "should work / probably / seems to / 아마 됐을 거야" 등 추측 언어 사용
+   ✗ 실제 커맨드 출력 없이 "통과" 주장
+   ✗ 핵심 케이스 미검증 (골든패스, 에러 케이스 중 하나라도 빠짐)
+   ✗ 회귀 확인 없음 (인접 기능이 깨졌는지 미확인)
+
+3. GOAL.md 성공 기준과 대조 — 기준 항목 전부 체크됐는지 확인
+   미달 항목 있으면 FAIL
+
+4. DECISIONS.md 최근 결정과 충돌 없는지 확인
+   충돌 발견 시 GATE → 사용자에게 보고
+
+5. 위 전부 통과 시에만 PASS:
    PASS → GATE_LOG.md 기록 → MODULES.md 해당 모듈 DONE → 다음 모듈 스폰
-   FAIL → bugfix 루프 재진입
+   FAIL → bugfix Executor 재스폰
    GATE → DECISIONS.md 보류 기록 → 사용자에게 한 줄 보고
-4. CONTEXT.md §현재 상태 갱신
+
+6. CONTEXT.md §현재 상태 갱신
 ```
 
 ### 2-5. 멈추지 않기
