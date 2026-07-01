@@ -53,6 +53,29 @@ rm <프로젝트루트>/.orchestration/ACTIVE
 
 ---
 
+## 인테이크 캡처 훅 (두서없는 메시지 무손실 반영)
+
+`~/.claude/hooks/orchestration-intake.py` (UserPromptSubmit 훅) 가 항상 설치돼 있음.
+`.orchestration/ACTIVE` 있는 동안 사용자가 보내는 **모든 메시지 원문을 모델 판단 없이 기계적으로** `.orchestration/INTAKE.md`에 타임스탬프+`UNPROCESSED` 마커로 append.
+
+두서없이 여러 메시지로 쭉쭉 요구사항을 흘려도 원문 저장 자체는 훅이 담당하므로 유실되지 않는다. 오케스트레이터가 할 일은 **트리아지**뿐:
+
+```
+매 응답 시작 전 (Executor 스폰 여부와 무관하게 항상):
+  1. .orchestration/INTAKE.md 열어서 UNPROCESSED 블록 전부 확인
+  2. 블록 없음 → 그냥 진행
+  3. 블록 있음 →
+     a. 각 블록에서 액션 아이템 추출
+     b. GOAL.md §Pending (또는 이미 있는 MODULES.md 항목)에 반영
+     c. 사소한 잡담/질문이라 반영할 액션이 없으면 "반영할 항목 없음" 사유를 남기고 넘어감
+     d. 처리한 블록의 "UNPROCESSED" → "TRIAGED"로 Edit (.orchestration/ 내부라 가드 예외)
+  4. 트리아지 끝나기 전엔 Executor 스폰 등 다음 단계로 넘어가지 않는다
+```
+
+INTAKE.md는 원문 로그(무손실), GOAL.md/MODULES.md는 정제된 작업 목록. 둘의 역할을 섞지 않는다.
+
+---
+
 ## PHASE 0 — 허브 초기화 (세션 시작 시)
 
 ### 0-1. 프로젝트 경로 + 목표 확인
@@ -88,7 +111,10 @@ MEMORY.md    ← cross-session context (learned facts, watch-outs)
 CONTEXT.md   ← current state + next immediate actions (auto-updated)
 ISSUES.md    ← broken things, unresolved bugs, known constraints
 GATE_LOG.md  ← gate judgment history (PASS/FAIL + rationale)
+INTAKE.md    ← auto-created by the intake hook. Verbatim user-message log (UNPROCESSED/TRIAGED)
 ```
+
+> INTAKE.md는 직접 만들 필요 없음 — `orchestration-intake.py` 훅이 첫 메시지 시점에 자동 생성.
 
 ### 0-4. HUB.md 템플릿
 
@@ -250,6 +276,7 @@ MODULES.md 작성:
 Agent 스폰 (Executor 역할):
 
 ## Pending backlog check
+.orchestration/INTAKE.md에 UNPROCESSED 블록이 남아있으면 안 됨 — 먼저 위 "인테이크 캡처 훅" 절차로 전부 트리아지.
 이번 대화에서 아직 모듈 미배정된 요구사항: <나열 — 없으면 "없음">
 → 있으면 이 Executor 스폰 전에 GOAL.md §Pending에 전부 기록했는지 확인
 
@@ -515,8 +542,9 @@ GATE (사용자 확인 필요):
 2. .orchestration/CONTEXT.md §현재 상태 확인
 3. .orchestration/GOAL.md §완료 여부 확인
 4. .orchestration/DECISIONS.md 최근 5개 항목 확인 — 구조 변경·번복된 결정 파악
-5. 목표 미달성 → 즉시 다음 모듈 에이전트 스폰
-6. 상태 불명확 → .orchestration/GATE_LOG.md 최근 항목 확인
+5. .orchestration/INTAKE.md UNPROCESSED 블록 확인 — 세션 끊기기 직전 흘린 메시지가 트리아지 안 됐을 수 있음
+6. 목표 미달성 → 즉시 다음 모듈 에이전트 스폰
+7. 상태 불명확 → .orchestration/GATE_LOG.md 최근 항목 확인
 ```
 
 **세션이 끊겨도 허브 문서가 있으면 같은 자리에서 재개. DECISIONS.md가 CONTEXT.md보다 최신일 수 있으니 반드시 둘 다 읽는다.**
