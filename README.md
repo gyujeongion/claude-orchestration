@@ -40,6 +40,21 @@ You ←────────────────────────�
 
 ---
 
+## Is This For You?
+
+This adds real overhead — two hooks, eight hub documents, a phased review loop. It's worth it when a project is genuinely multi-module and will span sessions. It's the wrong tool otherwise.
+
+| Good fit | Overkill |
+|---|---|
+| Several independent modules that can run in parallel | A single file edit or one-shot bug fix |
+| Work that will span multiple sessions / context resets | Something you'll finish in one sitting |
+| You want to keep talking to Claude while agents build in the background | A task with one clear, already-complete spec |
+| Requirements will keep arriving in scattered messages as work progresses | — |
+
+When in doubt, start without it — invoke `/orchestration` mid-task once the project turns out bigger than expected.
+
+---
+
 ## How It Works
 
 **Main session (your conversation)** — Claude decomposes the goal, spawns agents, reads reports, makes gate calls. Always responsive to you.
@@ -78,18 +93,21 @@ Add to your `~/.claude/settings.json`:
 
 ---
 
-## The Intake Hook — Never Lose a Requirement
+## The Intake Hooks — Never Lose a Requirement
 
 You rarely hand Claude a clean spec up front. More often you drop requirements across several messages as they occur to you — "oh and also handle X", "wait, one more thing" — while agents are already running in the background.
 
-`hooks/orchestration-intake.py` (a `UserPromptSubmit` hook) closes that gap mechanically instead of relying on the model to remember. While `.orchestration/ACTIVE` exists, every message you send is appended verbatim to `.orchestration/INTAKE.md` with an `UNPROCESSED` marker — no model judgment involved, so nothing you say can be silently dropped.
+Two hooks close that gap mechanically instead of relying on the model to remember:
 
-The orchestrator's job becomes triage only: before it does anything else, it reads every `UNPROCESSED` block, folds the action items into `GOAL.md §Pending`, and marks the block `TRIAGED`. It won't spawn the next Executor until that's done.
+- **`hooks/orchestration-intake.py`** (`UserPromptSubmit`) — while `.orchestration/ACTIVE` exists, every message you send is appended verbatim to `.orchestration/INTAKE.md` as an id-numbered, file-locked block (`<!-- intake:block id=N status=UNPROCESSED -->`). No model judgment involved, so nothing you say can be silently dropped. The log is append-only — triaged blocks stay in place with `status=TRIAGED` rather than being auto-archived elsewhere, so version-control diffs stay clean.
+- **`hooks/orchestration-intake-gate.py`** (`PreToolUse`, matched to the Agent/Task tool) — blocks spawning the next subagent while `INTAKE.md` still has any `UNPROCESSED` block. This is what makes triage a hard gate rather than a reminder the orchestrator can lose track of mid-conversation, the same way the guard hook makes "don't edit directly" a hard gate instead of a rule. Scope note: like the guard hook, this intercepts the named tool call (Agent/Task) — it doesn't sandbox arbitrary shell execution.
+
+The orchestrator's job is triage only: read every `UNPROCESSED` block, fold the action items into `GOAL.md §Pending`, and flip that specific block's own opening marker to `status=TRIAGED` by its id (never a blanket find-and-replace across the whole file — other blocks' bodies may legitimately contain that word).
 
 **Install:**
 
 ```bash
-cp hooks/orchestration-intake.py ~/.claude/hooks/
+cp hooks/orchestration-intake.py hooks/orchestration-intake-gate.py ~/.claude/hooks/
 ```
 
 Add to your `~/.claude/settings.json`:
@@ -97,7 +115,10 @@ Add to your `~/.claude/settings.json`:
 ```json
 {
   "hooks": {
-    "UserPromptSubmit": [{ "command": "python3 ~/.claude/hooks/orchestration-intake.py" }]
+    "UserPromptSubmit": [{ "command": "python3 ~/.claude/hooks/orchestration-intake.py" }],
+    "PreToolUse": [
+      { "matcher": "Agent|Task", "command": "python3 ~/.claude/hooks/orchestration-intake-gate.py" }
+    ]
   }
 }
 ```
@@ -107,8 +128,8 @@ Add to your `~/.claude/settings.json`:
 ## Getting Started
 
 ```bash
-# 1. Install both hooks
-cp hooks/orchestration-guard.py hooks/orchestration-intake.py ~/.claude/hooks/
+# 1. Install all three hooks
+cp hooks/orchestration-guard.py hooks/orchestration-intake.py hooks/orchestration-intake-gate.py ~/.claude/hooks/
 
 # 2. Start orchestrating
 /orchestration ~/my-project "your goal in one sentence"
@@ -129,7 +150,7 @@ Claude sets up the hub, decomposes your project into modules, and starts spawnin
 | `CONTEXT` | Background the user injected |
 | `ISSUES` | Escalated failures awaiting user input |
 | `GATE_LOG` | Record of every gate event and outcome |
-| `INTAKE` | Auto-created by the intake hook. Verbatim log of every user message (UNPROCESSED/TRIAGED) |
+| `INTAKE` | Auto-created by the intake hook. Append-only, id-numbered log of every user message (UNPROCESSED/TRIAGED) |
 | `ACTIVE` | Presence file — activates the guard hook |
 
 ---

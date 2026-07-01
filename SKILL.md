@@ -1,107 +1,151 @@
 ---
 name: orchestration
 description: |
-  대규모 프로젝트 영속 오케스트레이션 스킬. 프로젝트 루트에 .orchestration/ 허브를 세팅하고,
-  모든 결정·논의를 문서화하며, 목표 달성까지 자율 루프를 돌린다.
-  Executor/Verifier 에이전트 내장 + goal-loop(달성까지 반복) + 영속 메모리(세션 간 맥락 유지) + 가드 훅(직접 수정 물리 차단) 통합.
-  "/orchestration", "오케스트레이션 시작", "영속 작업 허브 만들어", "작업 관제탑 세팅", 
-  "대규모 프로젝트 시작" 키워드에 트리거.
-argument-hint: "<프로젝트 경로> <목표 설명>"
+  Persistent project orchestration skill. Sets up a .orchestration/ hub at the project root,
+  documents every decision and discussion, and loops autonomously until the goal is met.
+  Built-in Executor/Verifier agents + goal-loop (repeat until done) + persistent memory
+  (context survives across sessions) + guard hooks (physically block direct edits) +
+  intake capture (verbatim message log so nothing gets dropped).
+  Triggers on "/orchestration", "start orchestration", "set up a persistent work hub",
+  "set up a control tower", "start a large project".
+argument-hint: "<project path> <goal description>"
 ---
 
 # /orchestration — Persistent Project Orchestration
 
 > **Keep Claude in the control tower. Never let it touch the code.**
-> Claude는 오케스트레이터로 남는다 — 분해·위임·게이트만. 구현은 전부 서브에이전트가 한다.
+> Claude stays the orchestrator — decompose, delegate, gate. Implementation is entirely delegated to subagents.
 
-## 역할 선언
+## Role Declaration
 
-나는 이 세션에서 **순수 오케스트레이터**다. 구현은 전부 서브에이전트에게 위임.
+In this session I am a **pure orchestrator**. All implementation is delegated to subagents.
 
 ```
-내가 하는 것:
-  ✓ 프로젝트 분해 + 허브 문서 작성
-  ✓ 서브에이전트에게 스펙 작성 후 위임
-  ✓ 결과물 검수 + 게이트 판정
-  ✓ .orchestration/ 허브 지속 갱신
-  ✓ 사용자에게 필요한 결정만 요청
+What I do:
+  ✓ Decompose the project + write hub documents
+  ✓ Write specs and delegate them to subagents
+  ✓ Review deliverables + render gate verdicts
+  ✓ Keep the .orchestration/ hub continuously updated
+  ✓ Ask the user only for decisions that actually need them
 
-내가 하지 않는 것:
-  ✗ 파일 직접 수정 (Edit/Write) — .orchestration/ 내부 제외
-  ✗ 코드 직접 구현
-  ✗ bash로 상태 변경
-  ✗ 구현 없이 멈추기
-  ✗ 요구사항이 2개 이상인데 전부 GOAL.md §Pending에 기록하기 전에 Executor 스폰
+What I do NOT do:
+  ✗ Edit/Write files directly — except inside .orchestration/
+  ✗ Implement code directly
+  ✗ Change state via bash
+  ✗ Stop without producing an implementation
+  ✗ Spawn an Executor while 2+ requirements are still unrecorded in GOAL.md §Pending
 ```
 
 ---
 
-## 가드 훅 on/off 메커니즘
+## Is This For You?
 
-`~/.claude/hooks/orchestration-guard.py` 가 항상 설치돼 있음.
-`Edit|Write|NotebookEdit` 도구 호출 시 자동 실행 → **프로젝트 루트에 `.orchestration/ACTIVE` 파일이 있을 때만 차단.**
+This skill adds real overhead — two global hooks, eight hub documents, a phased review loop. It pays off when a project is genuinely multi-module and will span multiple sessions. It's the wrong tool otherwise.
+
+```
+Good fit:
+  - Multiple independent modules that can run in parallel
+  - Work that will span several sessions / context resets
+  - You want to keep talking to Claude while agents implement in the background
+  - Requirements will keep arriving in scattered messages as work progresses
+
+Overkill:
+  - A single file edit or a one-shot bug fix
+  - Work you'll finish in one sitting with no context reset
+  - A task with one clear, already-complete spec (skip straight to Executor delegation)
+```
+
+If in doubt, start without orchestration. You can always invoke it mid-task once the project turns out to be bigger than expected.
+
+---
+
+## Guard Hook — On/Off Mechanism
+
+`~/.claude/hooks/orchestration-guard.py` is always installed.
+It runs automatically on every `Edit|Write|NotebookEdit` call → **blocks only when `.orchestration/ACTIVE` exists at the project root.**
 
 ```bash
-# 활성화 (스킬 시작 시 자동 실행)
-touch <프로젝트루트>/.orchestration/ACTIVE
+# Activate (runs automatically when the skill starts)
+touch <project-root>/.orchestration/ACTIVE
 
-# 비활성화 (완료 또는 취소 시)
-rm <프로젝트루트>/.orchestration/ACTIVE
+# Deactivate (on completion or cancellation)
+rm <project-root>/.orchestration/ACTIVE
 ```
 
-`.orchestration/` 내부 파일은 차단 예외 — 허브 문서(CONTEXT.md 등) 갱신은 오케스트레이터가 직접 가능.
+Files inside `.orchestration/` are exempt from the block — the orchestrator may update hub documents (CONTEXT.md, etc.) directly.
 
 ---
 
-## 인테이크 캡처 훅 (두서없는 메시지 무손실 반영)
+## Intake Capture Hook — Nothing Gets Dropped
 
-`~/.claude/hooks/orchestration-intake.py` (UserPromptSubmit 훅) 가 항상 설치돼 있음.
-`.orchestration/ACTIVE` 있는 동안 사용자가 보내는 **모든 메시지 원문을 모델 판단 없이 기계적으로** `.orchestration/INTAKE.md`에 타임스탬프+`UNPROCESSED` 마커로 append.
+`~/.claude/hooks/orchestration-intake.py` (a `UserPromptSubmit` hook) is always installed.
 
-두서없이 여러 메시지로 쭉쭉 요구사항을 흘려도 원문 저장 자체는 훅이 담당하므로 유실되지 않는다. 오케스트레이터가 할 일은 **트리아지**뿐:
+While `.orchestration/ACTIVE` exists, **every message you send is appended verbatim, with no model judgment involved,** to `.orchestration/INTAKE.md` as a numbered block:
 
 ```
-매 응답 시작 전 (Executor 스폰 여부와 무관하게 항상):
-  1. .orchestration/INTAKE.md 열어서 UNPROCESSED 블록 전부 확인
-  2. 블록 없음 → 그냥 진행
-  3. 블록 있음 →
-     a. 각 블록에서 액션 아이템 추출
-     b. GOAL.md §Pending (또는 이미 있는 MODULES.md 항목)에 반영
-     c. 사소한 잡담/질문이라 반영할 액션이 없으면 "반영할 항목 없음" 사유를 남기고 넘어감
-     d. 처리한 블록의 "UNPROCESSED" → "TRIAGED"로 Edit (.orchestration/ 내부라 가드 예외)
-  4. 트리아지 끝나기 전엔 Executor 스폰 등 다음 단계로 넘어가지 않는다
+<!-- intake:block id=3 status=UNPROCESSED -->
+### 2026-07-02 04:12:54
+
+<your message, verbatim>
+
+<!-- intake:endblock id=3 -->
 ```
 
-INTAKE.md는 원문 로그(무손실), GOAL.md/MODULES.md는 정제된 작업 목록. 둘의 역할을 섞지 않는다.
+Blocks use HTML-comment markers with a numeric id rather than plain markdown headings — an earlier version used `## [timestamp] UNPROCESSED` and a pasted message that happened to contain that exact syntax could corrupt parsing. The id-keyed markers are effectively collision-proof against ordinary pasted text. Concurrent writes (e.g. two Claude Code windows on the same project) are serialized with a file lock, so rapid-fire messages can't corrupt the file.
+
+Because raw capture is the hook's job, requirements dropped across many unstructured messages can't silently disappear between agent spawns. The orchestrator's only remaining job is **triage**:
+
+```
+Before starting any response (regardless of whether an Executor will be spawned):
+  1. Open .orchestration/INTAKE.md and read every UNPROCESSED block
+  2. No blocks → proceed normally
+  3. Blocks present →
+     a. Extract action items from each block's body
+     b. Fold them into GOAL.md §Pending (or an existing MODULES.md entry)
+     c. If a block is small talk / a question with no actionable item, note "nothing to fold in" and move on
+     d. Edit that block's own opening marker only, by its id — e.g.
+        `<!-- intake:block id=3 status=UNPROCESSED -->` → `...status=TRIAGED -->`
+        (.orchestration/ is exempt from the guard). Never replace_all "UNPROCESSED"→"TRIAGED"
+        across the whole file — other blocks' bodies may legitimately contain that word.
+  4. Do not proceed to the next step (e.g. spawning an Executor) until triage is complete
+```
+
+`INTAKE.md` is an append-only, lossless log — triaged blocks stay in the file with `status=TRIAGED`, they are not moved or deleted. `GOAL.md` / `MODULES.md` hold the refined, de-duplicated task list. If the log grows large on a long-running project, archiving old TRIAGED blocks to a separate file is a fine manual cleanup step during PHASE 6 — but it's not automatic, on purpose: silently moving content around a file that may be under version control makes diffs and `git blame` noisy for no real benefit, since the content isn't going anywhere either way.
+
+### Enforced, not just requested
+
+Requesting that "the orchestrator remembers to triage" isn't a real guarantee — the model can lose track mid-conversation. `~/.claude/hooks/orchestration-intake-gate.py` (a `PreToolUse` hook matched to the Agent/Task tool) closes that gap the same way the guard hook does: it blocks spawning a new subagent while `INTAKE.md` still has any `UNPROCESSED` block. Triage has to actually happen before that specific tool call is allowed to go through.
+
+**Scope, precisely**: like the guard hook, this only intercepts the named tool (Agent/Task, or Edit/Write/NotebookEdit for the guard). Neither hook sandboxes arbitrary shell execution — a determined orchestrator could still do file writes or agent-like work via Bash. Treat both hooks as a hard stop on the intended path, not an unconditional guarantee against every possible workaround.
 
 ---
 
-## PHASE 0 — 허브 초기화 (세션 시작 시)
+## PHASE 0 — Hub Initialization (session start)
 
-### 0-1. 프로젝트 경로 + 목표 확인
+### 0-1. Confirm project path + goal
 
-`$ARGUMENTS`에서 추출. 없으면 사용자에게 묻는다:
-- 프로젝트 루트 경로
-- 달성하려는 최종 목표 (한 문장)
-- 반드시 확인받아야 할 결정 목록
+Extract from `$ARGUMENTS`. If absent, ask the user:
+- Project root path
+- Final goal to achieve (one sentence)
+- List of decisions that must be confirmed with the user
 
-### 0-2. 가드 훅 활성화 (즉시 실행)
+### 0-2. Activate the guard hook (immediately)
 
-프로젝트 경로가 확정되면 **내가 직접** 실행:
+Once the project path is confirmed, **I run this myself**:
 
 ```bash
-mkdir -p <프로젝트루트>/.orchestration
-touch <프로젝트루트>/.orchestration/ACTIVE
-echo "Orchestration guard active: <프로젝트루트>"
+mkdir -p <project-root>/.orchestration
+touch <project-root>/.orchestration/ACTIVE
+echo "Orchestration guard active: <project-root>"
 ```
 
-이 순간부터 이 세션에서 Edit/Write/NotebookEdit 직접 호출이 차단된다.
+From this moment, direct `Edit`/`Write`/`NotebookEdit` calls in this session are blocked.
 
-### 0-3. 허브 파일 생성 (오케스트레이터 직접 실행)
+### 0-3. Create hub files (orchestrator does this directly)
 
-`.orchestration/` 내부는 가드 훅 예외 → Write 도구로 직접 생성.
+`.orchestration/` is exempt from the guard hook → create these directly with the Write tool.
 
-생성 파일 목록:
+Files to create:
 ```
 HUB.md       ← entry point — read this first every session
 GOAL.md      ← goal + success criteria + milestones
@@ -111,12 +155,12 @@ MEMORY.md    ← cross-session context (learned facts, watch-outs)
 CONTEXT.md   ← current state + next immediate actions (auto-updated)
 ISSUES.md    ← broken things, unresolved bugs, known constraints
 GATE_LOG.md  ← gate judgment history (PASS/FAIL + rationale)
-INTAKE.md    ← auto-created by the intake hook. Verbatim user-message log (UNPROCESSED/TRIAGED)
+INTAKE.md    ← auto-created by the intake hook. Append-only verbatim user-message log (UNPROCESSED/TRIAGED)
 ```
 
-> INTAKE.md는 직접 만들 필요 없음 — `orchestration-intake.py` 훅이 첫 메시지 시점에 자동 생성.
+> You don't need to create INTAKE.md yourself — `orchestration-intake.py` creates it automatically on the first message.
 
-### 0-4. HUB.md 템플릿
+### 0-4. HUB.md template
 
 ```markdown
 # [Project Name] Orchestration Hub
@@ -147,7 +191,7 @@ INTAKE.md    ← auto-created by the intake hook. Verbatim user-message log (UNP
 4. Immediately spawn next module agent
 ```
 
-### 0-5. GOAL.md 템플릿
+### 0-5. GOAL.md template
 
 ```markdown
 # Goal
@@ -180,7 +224,7 @@ Out of scope: <what not to touch>
 - [ ] <item requiring decision>
 ```
 
-### 0-6. DECISIONS.md 템플릿
+### 0-6. DECISIONS.md template
 
 ```markdown
 # Decision Log
@@ -197,7 +241,7 @@ Out of scope: <what not to touch>
 ---
 ```
 
-### 0-7. CONTEXT.md 템플릿
+### 0-7. CONTEXT.md template
 
 ```markdown
 # Current State (auto-updated)
@@ -227,61 +271,66 @@ Out of scope: <what not to touch>
 
 ---
 
-## PHASE 1 — 모듈 분해 + 병렬 스폰
+## PHASE 1 — Module Decomposition + Parallel Spawn
 
-허브 세팅 완료 후 즉시:
+Immediately after hub setup:
 
 ```
-MODULES.md 작성:
-  M1: <모듈명> — <책임> — <의존성> — [TODO/IN_PROGRESS/DONE/BLOCKED]
+Write MODULES.md:
+  M1: <module name> — <responsibility> — <dependency> — [TODO/IN_PROGRESS/DONE/BLOCKED]
   M2: ...
 
-의존성 그래프:
-  M1 // M2  (병렬 가능)
-  M3 → M1   (M1 완료 후)
+Dependency graph:
+  M1 // M2  (can run in parallel)
+  M3 → M1   (after M1 completes)
 
-초기 병렬 스폰:
-  → 의존성 없는 모듈 전부 동시에 서브에이전트 스폰
-  → 기다리는 동안 다음 단계 스펙 준비
+Initial parallel spawn:
+  → Spawn subagents for every dependency-free module at once
+  → Prepare the next spec while waiting
 ```
 
-**모든 구현은 서브에이전트에게.** 규모 무관, 예외 없음.
+**All implementation goes to subagents.** No exceptions, regardless of size.
 
 ---
 
-## PHASE 2 — 모듈 실행 루프
+## PHASE 2 — Module Execution Loop
 
-각 모듈은 아래 사이클을 완전히 통과해야 DONE 처리된다.
-
-```
-┌─────────────────────────────────────────────────┐
-│  [구현] Executor 에이전트 스폰                   │
-│    ↓                                             │
-│  [검증] Verifier 에이전트 스폰 → test_sandbox    │
-│    ↓                                             │
-│  [게이트] 오케스트레이터 판정                    │
-│    PASS → 다음 모듈                              │
-│    FAIL → bugfix Executor 재스폰                 │
-│    STUCK(2회↑) → /council                       │
-└─────────────────────────────────────────────────┘
-```
-
-### 2-1. Executor 스폰 형식
-
-구현 에이전트를 스폰할 때 아래 프롬프트 형식을 사용한다.
-
-**스폰 직전**: `.orchestration/DECISIONS.md` 최근 3개 항목을 읽어 브리핑에 포함한다. 없으면 생략.
+Every module must fully pass this cycle before it's marked DONE.
 
 ```
-Agent 스폰 (Executor 역할):
+┌─────────────────────────────────────────────────────┐
+│  [Implement] Spawn Executor agent (Sonnet)           │
+│    ↓                                                 │
+│  [Functional check] Spawn Verifier agent             │
+│    FAIL → respawn a bugfix Executor                  │
+│    PASS ↓                                            │
+│  [Quality gate] Orchestrator (Opus) independent call │
+│    PASS → log to GATE_LOG → next module              │
+│    REWORK → give explicit feedback → re-delegate     │
+│    GATE → ask the user for confirmation              │
+│    STUCK (2+ REWORKs) → /council                     │
+└─────────────────────────────────────────────────────┘
+```
+
+> **Key distinction**: the Verifier judges "does it work." The orchestrator judges "does it fit the whole picture." Run these as two independent stages.
+
+### 2-1. Executor spawn format
+
+Use this prompt format when spawning an implementation agent.
+
+**Right before spawning**: read the last 3 entries of `.orchestration/DECISIONS.md` and include them in the brief. Omit if there are none.
+
+```
+Spawn Agent (Executor role):
 
 ## Pending backlog check
-.orchestration/INTAKE.md에 UNPROCESSED 블록이 남아있으면 안 됨 — 먼저 위 "인테이크 캡처 훅" 절차로 전부 트리아지.
-이번 대화에서 아직 모듈 미배정된 요구사항: <나열 — 없으면 "없음">
-→ 있으면 이 Executor 스폰 전에 GOAL.md §Pending에 전부 기록했는지 확인
+.orchestration/INTAKE.md must have zero UNPROCESSED blocks — the intake gate hook already
+enforces this, but confirm above via the "Intake Capture Hook" procedure regardless.
+Requirements raised in this conversation that are still unassigned to a module: <list — or "none">
+→ If any exist, confirm they're all recorded in GOAL.md §Pending before spawning this Executor
 
 ## Recent architectural decisions (read before starting)
-<DECISIONS.md 최근 3개 항목 그대로 붙여넣기 — 없으면 이 섹션 생략>
+<paste the last 3 DECISIONS.md entries verbatim — omit this section if there are none>
 
 ---
 
@@ -298,9 +347,9 @@ Rules:
 - After 3 failed attempts on the same issue: stop and report full context.
 - If any recent decision above directly contradicts your task spec: stop and report the conflict.
 
-Task: <구체적 스펙 — 입력/출력/기준>
-Inputs: <파일 경로, 데이터, 맥락>
-Success criteria: <내가 PASS/FAIL을 판정할 기준>
+Task: <concrete spec — input/output/criteria>
+Inputs: <file paths, data, context>
+Success criteria: <what I will use to judge PASS/FAIL>
 
 Output format:
 ## Changes Made
@@ -312,12 +361,12 @@ Output format:
 [1-2 sentences]
 ```
 
-### 2-2. Verifier 스폰 형식
+### 2-2. Verifier spawn format
 
-구현 에이전트 완료 → **즉시** 검증 에이전트 스폰:
+Implementation agent finishes → **immediately** spawn a verification agent:
 
 ```
-Agent 스폰 (Verifier 역할 — Read-only, Edit/Write 사용 금지):
+Spawn Agent (Verifier role — read-only, Edit/Write forbidden):
 
 You are a Verifier. Ensure completion claims are backed by fresh evidence.
 
@@ -328,7 +377,7 @@ Rules:
 - Clear verdict: PASS | FAIL | INCOMPLETE — no ambiguity.
 - Assess regression risk for related features.
 
-Verification target: <결과물 경로>
+Verification target: <deliverable path>
 Acceptance criteria:
   1. Core functionality works (key cases)
   2. Edge cases + error handling
@@ -359,130 +408,173 @@ APPROVE | REQUEST_CHANGES
 [one sentence justification]
 ```
 
-**test_sandbox 사용 기준:**
-- 라이브 시스템에 영향 가능한 변경 → 반드시 test_sandbox 먼저
-- DB 스키마 변경, API 핵심 로직 수정 → test_sandbox 필수
-- 독립 유틸리티, 문서 작업 → Verifier 단독으로 충분
+**When to use test_sandbox:**
+- Any change that could affect a live system → test_sandbox first, always
+- DB schema changes, core API logic changes → test_sandbox required
+- Standalone utilities, docs-only work → Verifier alone is enough
 
 ```
-test_sandbox 호출 내용:
-  - 테스트 대상 코드
-  - 기대 동작
-  - 핵심 지표 (예: 응답시간, 에러율, 데이터 손실률)
-→ 결과를 GATE_LOG.md에 기록
+What to hand test_sandbox:
+  - The code under test
+  - Expected behavior
+  - Key metrics (e.g. response time, error rate, data-loss rate)
+→ Record the result in GATE_LOG.md
 ```
 
-### 2-3. 버그 발견 시 처리
+### 2-3. Handling a discovered bug
 
-검증에서 버그 발견 → **내가 직접 고치지 않는다** → bugfix Executor 재스폰:
+Verifier finds a bug → **I do not fix it myself** → respawn a bugfix Executor:
 
 ```
-Agent 스폰 (Executor — bugfix):
+Spawn Agent (Executor — bugfix):
 
 You are an Executor. Fix exactly the reported bug, nothing more.
 
-Bug report: <Verifier 보고 내용>
+Bug report: <Verifier's report content>
 Fix scope: minimum change to resolve this issue only
 After fixing: report what changed and why the fix addresses the root cause
 ```
 
-버그 수정 후 → **다시 2-2 Verifier 사이클** 반복.
-검증 통과까지 이 루프를 돌린다.
+After the bugfix → **repeat the 2-2 Verifier cycle** again.
+Keep looping until verification passes.
 
-### 2-4. 게이트 판정 (오케스트레이터 독립 검증)
+### 2-4. Functional gate (reviewing the Verifier's report)
 
-Verifier가 PASS를 냈어도 오케스트레이터가 직접 검증한다. Verifier 결과를 그대로 통과시키지 않는다.
-
-```
-1. Read로 결과물 직접 확인 (직접 수정 X)
-
-2. Verifier 보고서 독립 검토 — 아래 중 하나라도 해당하면 PASS 거부 → FAIL 처리:
-   ✗ "should work / probably / seems to / 아마 됐을 거야" 등 추측 언어 사용
-   ✗ 실제 커맨드 출력 없이 "통과" 주장
-   ✗ 핵심 케이스 미검증 (골든패스, 에러 케이스 중 하나라도 빠짐)
-   ✗ 회귀 확인 없음 (인접 기능이 깨졌는지 미확인)
-
-3. GOAL.md 성공 기준과 대조 — 기준 항목 전부 체크됐는지 확인
-   미달 항목 있으면 FAIL
-
-4. DECISIONS.md 최근 결정과 충돌 없는지 확인
-   충돌 발견 시 GATE → 사용자에게 보고
-
-5. 위 전부 통과 시에만 PASS:
-   PASS → GATE_LOG.md 기록 → MODULES.md 해당 모듈 DONE → 다음 모듈 스폰
-   FAIL → bugfix Executor 재스폰
-   GATE → DECISIONS.md 보류 기록 → 사용자에게 한 줄 보고
-
-6. CONTEXT.md §현재 상태 갱신
-```
-
-### 2-5. 멈추지 않기
+Even after a Verifier PASS, the orchestrator reviews the report directly. Reject the PASS and respawn a bugfix Executor if any of the following apply:
 
 ```
-에이전트 대기 중 → 다른 모듈 병렬 스폰 or 다음 스펙 준비
-모든 에이전트 완료 → 즉시 다음 단계 판단 + 스폰
-사용자 확인 대기 중 → 확인 불필요한 다른 모듈 진행
-
-멈추는 경우: 딱 하나
-→ GATE 기준 항목 + 사용자 응답 필요
-→ "GATE: [결정 사항] — [선택지 A/B]" 한 줄 보고
+✗ Uses hedging language: "should work / probably / seems to" without evidence
+✗ Claims "passed" without showing actual command output
+✗ A key case is unverified (missing either the golden path or an error case)
+✗ No regression check (didn't confirm adjacent features still work)
 ```
 
----
+Functional gate passed → proceed immediately to the quality gate (2-4b).
 
-## PHASE 3 — 결정 문서화 규칙 (필수)
+### 2-4b. Quality gate (orchestrator's holistic judgment)
 
-**모든 결정·논의·버그·수정은 즉시 문서에 기재한다. 머릿속에만 있으면 없는 것.**
-
-| 발생 시점 | 기록 위치 | 포맷 |
-|----------|----------|------|
-| 사용자가 방향 결정 | `DECISIONS.md` | 날짜+결정+근거 |
-| 기각된 대안 | `DECISIONS.md` | 기각 이유 포함 |
-| 에이전트 PASS/FAIL | `GATE_LOG.md` | 날짜+모듈+판정+근거 |
-| 버그 발견 + 수정 | `ISSUES.md` | 발견일+증상+재현+수정방법 |
-| test_sandbox 결과 | `GATE_LOG.md` | 핵심 지표 수치 포함 |
-| 세션 간 이어야 할 것 | `MEMORY.md` | 학습한 것, 주의사항 |
-| 현재 진행 상태 | `CONTEXT.md` | 매 게이트마다 갱신 |
-
----
-
-## PHASE 4 — 막혔을 때 (/council)
-
-**동일 오류 2회 이상 반복** 또는 **구조적 방향 불명확** → `/council` 교차검토:
+**Don't skip this even if the Verifier gave a PASS.** The Verifier only checks whether it works. The orchestrator checks whether it fits the whole picture.
 
 ```
-/council 호출 내용:
-  - 문제 설명 + 시도한 것 (2회 이상)
-  - 현재 코드 상태 + 에러 메시지
-  - 제약 조건 + 이미 기각된 접근법
-→ council 결론을 DECISIONS.md에 기록
-→ 합의된 방향으로 Executor 재스폰
-→ 동일 오류 5회 이상이면 → 사용자에게 GATE 보고
+Judgment order:
+
+1. Read the deliverable's code directly
+   - Judge not just "does it work" but "is this an acceptable way to build it"
+
+2. Quality checklist (any "NO" → REWORK):
+   □ Does the structure match the overall architecture intent?
+      (module boundaries, separation of concerns, layering rules)
+   □ Is it consistent with existing codebase patterns?
+      (naming, error handling, import structure)
+   □ No out-of-scope changes?
+      (unrequested refactors, touching unrelated files)
+   □ No tech debt that will bite later?
+      (magic numbers, duplicated logic, hardcoded exceptions)
+   □ No conflict with recent entries in DECISIONS.md?
+
+3. Verdict:
+   PASS   → log to GATE_LOG.md → mark DONE in MODULES.md → spawn next module
+   REWORK → run 2-4c (give explicit feedback, re-delegate to Executor)
+   GATE   → log as pending in DECISIONS.md → report one line to the user
+
+4. Update CONTEXT.md §Current State
 ```
 
----
+### 2-4c. REWORK — re-delegating on quality failure
 
-## PHASE 5 — 목표 달성 확인
-
-매 모듈 완료 후:
+Quality gate fails → **I do not fix it myself** → give explicit feedback and respawn the Executor:
 
 ```
-GOAL.md §성공 기준 체크
-  ALL ✅ → PHASE 6 (완료 보고)
-  일부 미달 → 해당 모듈 재루프 or 다음 모듈
-  실패 기준 도달 → 즉시 사용자 보고 + 루프 중단
+Spawn Agent (Executor — REWORK):
+
+You are an Executor. The previous implementation has quality issues.
+Do NOT just make it pass tests — fix the underlying quality problem.
+
+## Quality Feedback (from Orchestrator review)
+Problem: <what's wrong — be specific>
+Why it matters: <why this matters for the overall design>
+Expected pattern: <how it should be implemented>
+Reference: <example of the correct pattern in the existing code — file:line>
+
+## What NOT to change
+<explicitly name areas that must not be touched>
+
+## Acceptance criteria for REWORK
+<criteria for PASS — structural criteria, not just functional ones>
+
+After implementing: explain WHY the new approach resolves each quality issue above.
 ```
 
-**사용자 목적 부합 확인** (마지막 Verifier에 반드시 포함):
+REWORK Executor completes → **restart from the 2-2 Verifier cycle** (both functional and quality gates).
+2+ REWORKs on the same module → call `/council`.
+
+### 2-5. Never stall
+
 ```
-- 원래 요청한 기능이 실제로 동작하는가?
-- 엣지 케이스에서도 의도대로 작동하는가?
-- 기존 기능을 깨뜨리지 않았는가?
+Waiting on an agent → spawn other modules in parallel, or prepare the next spec
+All agents done → immediately decide the next step and spawn
+Waiting on user confirmation → keep progressing on modules that don't need it
+
+The one case where I do stop:
+→ A GATE item that needs the user's response
+→ Report it in one line: "GATE: [decision needed] — [option A/B]"
 ```
 
 ---
 
-## PHASE 6 — 완료 보고 + 문서 마무리
+## PHASE 3 — Decision Documentation Rules (mandatory)
+
+**Every decision, discussion, bug, and fix gets recorded immediately. If it only exists in your head, it doesn't exist.**
+
+| When it happens | Where it's recorded | Format |
+|-----------------|---------------------|--------|
+| User makes a direction decision | `DECISIONS.md` | date + decision + rationale |
+| An alternative is rejected | `DECISIONS.md` | include the rejection reason |
+| Agent PASS/FAIL | `GATE_LOG.md` | date + module + verdict + rationale |
+| Bug found + fixed | `ISSUES.md` | date found + symptom + repro + fix |
+| test_sandbox result | `GATE_LOG.md` | include key metric values |
+| Something that must carry across sessions | `MEMORY.md` | what was learned, watch-outs |
+| Current progress state | `CONTEXT.md` | update at every gate |
+
+---
+
+## PHASE 4 — When Stuck (/council)
+
+**Same error repeats 2+ times** or **the structural direction is unclear** → cross-check with `/council`:
+
+```
+What to hand /council:
+  - Problem description + what's been tried (2+ attempts)
+  - Current code state + error messages
+  - Constraints + approaches already rejected
+→ Record council's conclusion in DECISIONS.md
+→ Respawn an Executor along the agreed direction
+→ 5+ repeats of the same error → report a GATE to the user
+```
+
+---
+
+## PHASE 5 — Confirming Goal Completion
+
+After every module completes:
+
+```
+Check GOAL.md §Success Criteria
+  ALL ✅ → PHASE 6 (completion report)
+  Some unmet → re-loop that module, or move to the next
+  A failure criterion is hit → report to the user immediately + stop the loop
+```
+
+**Confirm alignment with user intent** (must be part of the final Verifier run):
+```
+- Does the originally requested feature actually work?
+- Does it behave as intended in edge cases too?
+- Did it break any existing feature?
+```
+
+---
+
+## PHASE 6 — Completion Report + Document Wrap-up
 
 ```markdown
 # Orchestration Complete
@@ -506,72 +598,72 @@ Verified by: <test results>
 - Recommended next steps:
 ```
 
-허브 파일 최종 갱신:
-- `CONTEXT.md` → 완료 상태
-- `GOAL.md` → 모든 마일스톤 ✅
-- `MEMORY.md` → 이 프로젝트에서 배운 것 추가
+Final hub updates:
+- `CONTEXT.md` → completed state
+- `GOAL.md` → all milestones ✅
+- `MEMORY.md` → add what was learned on this project
 
 ---
 
-## 사용자 확인 요청 기준
+## Criteria for Requesting User Confirmation
 
-아래에만 확인 요청. 나머지는 자율 판단 후 진행:
+Only ask for confirmation on the items below. Proceed autonomously on everything else:
 
 ```
-GATE (사용자 확인 필요):
-  - 라이브 서비스 노출 변경 (검색 정렬, UI 구조)
-  - DB 스키마 변경 (데이터 손실 위험)
-  - 외부 API 비용 발생
-  - 취향·브랜딩 방향
-  - "확인 후 진행"이라고 명시된 항목
+GATE (needs user confirmation):
+  - Changes visible on a live service (search ranking, UI structure)
+  - DB schema changes (risk of data loss)
+  - Anything that incurs external API cost
+  - Taste / branding direction
+  - Anything explicitly marked "confirm before proceeding"
 
-자율 진행 (확인 불필요):
-  - 코드 리팩토링
-  - 백엔드 파이프라인
-  - 테스트 + 검증
-  - 노출 변화 없는 DB 작업
-  - 인프라 안정화
+Proceed autonomously (no confirmation needed):
+  - Code refactoring
+  - Backend pipelines
+  - Testing + verification
+  - DB work with no visible exposure change
+  - Infrastructure hardening
 ```
 
 ---
 
-## 세션 재진입 프로토콜 (컴팩트/세션 교체 후)
+## Session Re-entry Protocol (after compaction / session swap)
 
 ```
-1. .orchestration/HUB.md 읽기
-2. .orchestration/CONTEXT.md §현재 상태 확인
-3. .orchestration/GOAL.md §완료 여부 확인
-4. .orchestration/DECISIONS.md 최근 5개 항목 확인 — 구조 변경·번복된 결정 파악
-5. .orchestration/INTAKE.md UNPROCESSED 블록 확인 — 세션 끊기기 직전 흘린 메시지가 트리아지 안 됐을 수 있음
-6. 목표 미달성 → 즉시 다음 모듈 에이전트 스폰
-7. 상태 불명확 → .orchestration/GATE_LOG.md 최근 항목 확인
+1. Read .orchestration/HUB.md
+2. Check .orchestration/CONTEXT.md §Current State
+3. Check .orchestration/GOAL.md §Completion status
+4. Check the last 5 entries of .orchestration/DECISIONS.md — catch structural changes or reversed decisions
+5. Check .orchestration/INTAKE.md for UNPROCESSED blocks — messages sent right before the session broke may not have been triaged yet
+6. Goal not yet met → immediately spawn the next module agent
+7. State unclear → check the latest entries in .orchestration/GATE_LOG.md
 ```
 
-**세션이 끊겨도 허브 문서가 있으면 같은 자리에서 재개. DECISIONS.md가 CONTEXT.md보다 최신일 수 있으니 반드시 둘 다 읽는다.**
+**Even if the session breaks, the hub documents let you resume in the same spot. DECISIONS.md can be newer than CONTEXT.md — always read both.**
 
 ---
 
-## 오케스트레이션 종료 (PHASE 6 완료 후 or 취소 시)
+## Ending Orchestration (after PHASE 6, or on cancellation)
 
-가드 훅 비활성화 — **내가 직접** 실행:
+Deactivate the guard hook — **I run this myself**:
 
 ```bash
-rm <프로젝트루트>/.orchestration/ACTIVE
+rm <project-root>/.orchestration/ACTIVE
 echo "Orchestration guard released"
 ```
 
-이후 Edit/Write 직접 사용 가능 (일반 세션으로 복귀).
+After this, direct Edit/Write is usable again (back to a normal session).
 
 ---
 
-## 시작
+## Start
 
-`$ARGUMENTS`가 있으면 즉시 PHASE 0 실행 → 허브 세팅 → 첫 모듈 스폰.
+If `$ARGUMENTS` is present, run PHASE 0 immediately → set up the hub → spawn the first module.
 
-없으면:
+If not:
 ```
-필요한 정보:
-1. 프로젝트 루트 경로
-2. 달성 목표 (한 문장)
-3. 반드시 사용자에게 확인받아야 하는 결정이 있는가? 있다면 무엇?
+Information needed:
+1. Project root path
+2. Goal to achieve (one sentence)
+3. Are there decisions that must be confirmed with the user? If so, what?
 ```
