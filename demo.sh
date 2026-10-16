@@ -250,4 +250,4 @@ cat > "$HUB_DIR/GATE_LOG_FINAL.md" << 'EOF'
 EOF
 
 echo "✓ Demo files ready in $DEMO_DIR"
-ls -la "$HUB_DIR"
+ls -lgoa "$HUB_DIR"

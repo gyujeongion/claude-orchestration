@@ -46,7 +46,7 @@ Enter
 Sleep 1.8s
 
 # Hub directory
-Type@5ms "ls -la /tmp/orchestration-demo/.orchestration/"
+Type@5ms "ls -lgoa /tmp/orchestration-demo/.orchestration/"
 Enter
 Sleep 1.5s
 
